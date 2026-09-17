@@ -1,0 +1,10 @@
+squashfs_offset=5636096
+image_hostapd_cli_commands:
+disable_mld
+remove_link
+hostapd_cli_hashes:
+fa83e5871ff9252e17a6b1eca8cd2d3d04927972c45fb79ba8cac1ae9cb3de08  /tmp/tmp.8sSIpIctXW
+fa83e5871ff9252e17a6b1eca8cd2d3d04927972c45fb79ba8cac1ae9cb3de08  /home/<builder>/w1701k-mlo-build/source/build_dir/target-aarch64_cortex-a53_musl/root-airoha/usr/sbin/hostapd_cli
+image_vs_build_root=identical
+
+

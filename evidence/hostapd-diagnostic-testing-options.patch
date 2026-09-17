@@ -1,0 +1,7 @@
+--- a/package/network/services/hostapd/files/hostapd-full.config
++++ b/package/network/services/hostapd/files/hostapd-full.config
+@@
+-#CONFIG_TESTING_OPTIONS=y
++CONFIG_TESTING_OPTIONS=y
+
+

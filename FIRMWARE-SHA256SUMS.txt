@@ -1,0 +1,6 @@
+36034dfc2a67e2f035d2712cb11c90601a49e80cac422124127418cccdc65d1a  immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-chainload-uboot.itb
+5e21aa8fda068721435fd7baea02a54e947e839049843f347882ca574c9c529f  immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-initramfs-recovery.itb
+2c812fc8b7822a0adc1de291b7169d836149a61e8ada2571d5a7845adc398871  immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-squashfs-sysupgrade.itb
+
+
+

@@ -1,0 +1,41 @@
+diff --git a/package/kernel/mt76/Makefile b/package/kernel/mt76/Makefile
+index 759e34f..423b6fb 100644
+--- a/package/kernel/mt76/Makefile
++++ b/package/kernel/mt76/Makefile
+@@ -1,7 +1,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=mt76
+-PKG_RELEASE=1
++PKG_RELEASE=2
+ 
+ PKG_LICENSE:=BSD-3-Clause-Clear
+ PKG_LICENSE_FILES:=
+diff --git a/package/network/services/hostapd/Makefile b/package/network/services/hostapd/Makefile
+index e765ef5..9f33276 100644
+--- a/package/network/services/hostapd/Makefile
++++ b/package/network/services/hostapd/Makefile
+@@ -5,7 +5,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=hostapd
+-PKG_RELEASE:=2
++PKG_RELEASE:=3
+ 
+ PKG_SOURCE_URL:=https://w1.fi/hostap.git
+ PKG_SOURCE_PROTO:=git
+diff --git a/package/network/services/hostapd/files/hostapd-full.config b/package/network/services/hostapd/files/hostapd-full.config
+index a72ad0f..6ad3a73 100644
+--- a/package/network/services/hostapd/files/hostapd-full.config
++++ b/package/network/services/hostapd/files/hostapd-full.config
+@@ -333,7 +333,7 @@ CONFIG_HS20=y
+ # connect to this hostapd. These options allow, for example, to drop a
+ # certain percentage of probe requests or auth/(re)assoc frames.
+ #
+-#CONFIG_TESTING_OPTIONS=y
++CONFIG_TESTING_OPTIONS=y
+ 
+ # Automatic Channel Selection
+ # This will allow hostapd to pick the channel automatically when channel is set
+
+

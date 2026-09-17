@@ -1,0 +1,25 @@
+target=gemtek,w1701k-ubi
+source_commit=94bf0a31351fdd5a36159c3e41c167954cd05048
+kernel=6.18.38
+hostapd_utils=2026.04.02~b004de0b-r3
+wpad_openssl=2026.04.02~b004de0b-r3
+kmod-mt7996e - 6.18.38.2026.07.01~59676919-r2
+config_testing_options=enabled
+remove_link_in_final_rootfs=pass
+final_rootfs_binary_match=pass
+ps_sync_complete_patch=pass
+fit_target_name=pass
+powershell_probe_syntax=checked-on-windows
+ap_sysupgrade_test=pass
+ap_sysupgrade_test_rc=0
+remote_hash_match=pass
+flash_status=flashed-and-booted
+remote_temp_image=removed
+link1_remove_link=pass
+link2_remove_link=pass
+remaining_link_continuity=pass
+mld_full_rebuild=pass
+windows_dual_link_recovery=pending-45s-validation
+current_safe_state=mlo-off
+
+
