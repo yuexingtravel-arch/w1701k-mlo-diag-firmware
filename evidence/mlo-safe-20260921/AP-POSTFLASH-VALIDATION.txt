@@ -1,0 +1,18 @@
+version=MLO-safe-20260921
+revision=r0-94bf0a3
+kernel=6.18.38
+uptime_seconds=143
+wifi7_package=1.1.0-r20260920
+radio1_up=true
+radio1_pending=false
+radio1_failed=false
+radio2_up=true
+radio2_pending=false
+radio2_failed=false
+mlo_ifname=ap-mld0
+hostapd_status=ENABLED
+uci_changes_count=0
+critical_log_matches=0
+dynamic_status_code=0
+hardcoded_old_object_count=0
+/dev/ubi0_5             338.5M     84.0K    333.7M   0% /overlay

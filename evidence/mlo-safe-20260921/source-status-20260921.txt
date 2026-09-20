@@ -1,0 +1,8 @@
+## codex/w1701k-wifi7-save-fix
+ M package/kernel/mt76/Makefile
+ M package/luci-app-wifi7/Makefile
+ M package/luci-app-wifi7/htdocs/luci-static/resources/view/wifi7/index.js
+ M package/luci-app-wifi7/root/usr/share/rpcd/acl.d/luci-app-wifi7.json
+ M package/network/services/hostapd/Makefile
+ M package/network/services/hostapd/files/hostapd-full.config
+?? package/kernel/mt76/patches/0012-mt7996-fix-ps-sync-complete.patch

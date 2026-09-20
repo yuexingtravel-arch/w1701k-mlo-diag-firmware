@@ -1,0 +1,18 @@
+[
+  {
+    "DisplayName": "Receive Side Scaling",
+    "DisplayValue": "Disabled",
+    "RegistryKeyword": "*RSS",
+    "RegistryValue": [
+      "0"
+    ]
+  },
+  {
+    "DisplayName": "Throughput Acceleration",
+    "DisplayValue": "Disable",
+    "RegistryKeyword": "enableWmmTxop",
+    "RegistryValue": [
+      "1"
+    ]
+  }
+]

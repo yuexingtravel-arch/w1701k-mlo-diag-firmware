@@ -1,44 +1,37 @@
-# MLO-diag-20260916 r0-94bf0a3-mlodiag1
+# Release notes: mlo-safe-20260921-mlosafe2
 
-适用设备：Gemtek W1701K，板型 `gemtek,w1701k-ubi`。
+## 变更
 
-## 版本信息
+1. 修复 `/cgi-bin/luci/admin/network/wifi7` 保存进度卡住。
+   - 从 `network.wireless status` 动态发现运行时 MLO ifname。
+   - 使用真实的 `hostapd.ap-mld0` 状态，不再硬编码错误对象。
+   - 保存流程加入超时、错误捕获和按钮恢复。
+   - 使用受限的 `/sbin/wifi reload`，避免扩大为通用 shell RPC 权限。
+2. 修正 Wi-Fi 7 页面带宽显示。
+   - hostapd `eht_oper_chwidth=2` 显示为 160 MHz。
+   - hostapd `eht_oper_chwidth=9` 显示为 320 MHz。
+3. 完整保留 mt7996 PS-sync 防死循环修复。
+   - 检查事件最小长度。
+   - 拒绝短于 TLV header 的长度。
+   - 校验单客户端结构和多客户端数组边界。
+4. 保持 hostapd TTLM 能力保护。
+   - 没有在 mt7996 数据面尚不完整时强制公布 TID-to-Link 协商能力。
 
-- ImmortalWrt：`r0-94bf0a3`
-- Linux：`6.18.38`
-- mt76 / mt7996：`6.18.38.2026.07.01~59676919-r2`
-- mt7996 PS-sync：完整 TLV 边界检查修复
-- 构建用途：MLO Link Removal、MLD 重建和性能诊断
+## 实机结果
 
-## 镜像用途
+- 目标：Gemtek W1701K `gemtek_w1701k-ubi`
+- 内核：6.18.38
+- 最终页面包：`luci-app-wifi7 1.1.1-r20260921`
+- 页面保存/重载：通过
+- 5 GHz：160 MHz
+- 6 GHz：320 MHz
+- QCNCM865：5+6 GHz 双链关联可见
+- PS-sync/RCU stall 回归：未复现
+- 最终镜像 `sysupgrade -T`：退出码 0
 
-- `*-squashfs-sysupgrade.itb`：从兼容的 W1701K ImmortalWrt 系统升级时使用。
-- `*-initramfs-recovery.itb`：恢复环境使用，不作为日常 sysupgrade 镜像。
-- `*-chainload-uboot.itb`：引导链相关用途，不作为日常 sysupgrade 镜像。
+## 已知限制
 
-日常刷写只使用 `squashfs-sysupgrade.itb`，并先核对设备板型及 SHA-256。不要把 W1700K、XR1710G 或其他 AN7581 设备的镜像混用。
-
-## 验证结果
-
-- `sysupgrade -T` 兼容性检查通过，实机刷写和启动通过。
-- LAN 2.5G、三频无线、overlay、SSH/LuCI 均通过。
-- MLO 双 Link 关联、Link 1/Link 2 标准移除、剩余 Link 接管和 MLD 重建均通过。
-- 测试期间未出现 RCU stall、PS-sync 卡死、firmware reset/assert、panic 或 watchdog。
-- 当前 FastConnect 7800 会话协商为 `max_simul_links=1`，MLO 提供链路接管，但没有形成 5 GHz 与 6 GHz 的并行吞吐叠加。
-
-完整测试结论见 `COMPLETE-MLO-TEST-RESULT.md`，终端判断见 `CLIENT-WIFI-DIAGNOSIS.md`，刷写门槛见 `FLASH-GATE.md`。
-
-## 重要限制
-
-此版本启用了 `CONFIG_TESTING_OPTIONS`，用于暴露 hostapd 的 `remove_link` / `disable_mld` 诊断接口。它是经过实机验证的诊断固件，不建议作为长期生产固件。长期使用应重新构建保留 PS-sync 修复但关闭测试接口的生产版本，并完成短回归测试。
-
-## 固件 SHA-256
-
-```text
-36034dfc2a67e2f035d2712cb11c90601a49e80cac422124127418cccdc65d1a  immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-chainload-uboot.itb
-5e21aa8fda068721435fd7baea02a54e947e839049843f347882ca574c9c529f  immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-initramfs-recovery.itb
-2c812fc8b7822a0adc1de291b7169d836149a61e8ada2571d5a7845adc398871  immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-squashfs-sysupgrade.itb
-```
-
-
-
+- 未证明 TTLM 或同一业务的真实双链聚合。
+- 当前吞吐复测偏低；Windows 网卡的 RSS 和吞吐加速设置需要管理员权限才能进一步验证。
+- AP 到 Windows 的反向 iperf3 测试因 Windows 监听端口不可达而超时。
+- 本版本应作为预发布版本使用。

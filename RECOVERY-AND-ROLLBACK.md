@@ -1,54 +1,43 @@
-# W1701K 恢复与回退说明
+# 恢复与回退
 
-本说明适用于本仓库的 Gemtek W1701K 诊断固件。设备板型必须是 `gemtek,w1701k-ubi`。
+## 已保存的材料
 
-## 已准备的回退层级
+本次刷写前配置备份位于 `preflash-backup/`，包含 sysupgrade 配置归档、包清单、MTD/UBI 布局和 SHA-256。
 
-1. **正常软件回退**：设备仍可通过 LuCI 或 SSH 管理时，刷回已验证的 W1701K `squashfs-sysupgrade.itb`。
-2. **物理 Reset / 设备恢复流程**：管理网络不可达时，使用已验证可恢复初始状态的 Reset 流程。
-3. **Recovery / UART**：只有前两种方式均不可用时才进入底层恢复。测试现场没有连接 3.3 V USB-TTL UART，因此本版本的风险边界不包含实测 UART 恢复。
+更完整的旧系统恢复材料保存在本机：
 
-完整设备备份、原系统回退镜像、配置包、overlay、UBI 卷和 MTD 分区镜像已经单独离线保存并完成 SHA-256 校验。它们包含设备专属配置、主机密钥、授权密钥、校准数据和硬件标识，因此不上传到 GitHub。
+- `output/w1701k-current-backup-20260916/`
+- `output/w1701k-mlo-diag-20260916/`
+
+前者包含当前系统 FIT 镜像、sysupgrade 配置包、overlay、MTD NAND dump、UBI volume dump、factory/recovery/ubootenv 数据和校验清单。它们可用于低层恢复，但原始分区写入必须在能确认分区布局和启动路径时执行。
+
+## 恢复层级
+
+### 1. 配置错误，但设备仍能登录
+
+先恢复 `preflash-backup/w1701k-preflash-20260921-065559.tar.gz`，或在 LuCI 的备份/升级页面上传该归档。恢复后重启网络或设备，并核对管理 IP。
+
+### 2. 页面或无线配置不可用
+
+长按 Reset 按键可恢复当前已安装固件的出厂配置。Reset 不会把固件自动降级到旧版本；它会清除/重建当前固件的配置 overlay。
+
+### 3. 需要回刷上一版固件
+
+设备仍能进入 LuCI/SSH 时，使用此前通过验证的 `w1701k-ubi` sysupgrade 镜像。先运行 `sysupgrade -T`，确认板型匹配和退出码为 0，再执行正式升级。回刷时应选择不保留配置，避免新旧版本配置格式冲突，之后再按需恢复旧版配置包。
+
+### 4. 正常系统无法启动
+
+发布包提供 initramfs recovery 和 chainload U-Boot 镜像。当前没有 3.3 V USB-TTL UART，因此只有在设备自身 bootloader/recovery 按键流程仍可进入时才能使用。不要从正常系统直接把原始 NAND dump 写回整片闪存。
 
 ## 刷写前检查
 
-- 确认设备型号及板型为 W1701K / `gemtek,w1701k-ubi`。
-- 使用 `FIRMWARE-SHA256SUMS.txt` 核对下载文件。
-- 日常升级只选择 `*-squashfs-sysupgrade.itb`。
-- 在设备端先运行 `sysupgrade -T`，只有返回 0 才继续。
-- 不使用 `-F` 强刷，不把 W1700K、XR1710G 或其他 AN7581 设备镜像混用。
-- 保持备用 AP、稳定供电和有线管理路径可用。
-- 刷写期间不拔线、不断电、不按 Reset。
+1. 保持备用 AP 在线，电脑使用稳定的有线或备用无线连接。
+2. 核对板型为 `gemtek,w1701k-ubi`。
+3. 核对目标文件 SHA-256。
+4. 执行 `sysupgrade -T`，必须返回 0。
+5. 确认配置备份和完整恢复目录可读取。
+6. 刷写期间不要断电。
 
-## 标准刷写
+## 刷写后检查
 
-```sh
-sha256sum /tmp/immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-squashfs-sysupgrade.itb
-sysupgrade -T /tmp/immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-squashfs-sysupgrade.itb
-sysupgrade -v /tmp/immortalwrt-mlo-diag-20260916-r0-94bf0a3-mlodiag1-airoha-an7581-gemtek_w1701k-ubi-squashfs-sysupgrade.itb
-```
-
-本次实机刷写采用保留配置的标准 `sysupgrade -v`，并已通过启动、overlay、SSH/LuCI、三频无线和 2.5G LAN 验证。
-
-## 立即停止或回退的条件
-
-出现以下任一情况时，不启用 MLO 测试：
-
-- 启动循环或管理地址超过 15 分钟不可达；
-- 任一无线 PHY 消失；
-- 2.5G 上联失败；
-- UBI/UBIFS 错误；
-- firmware reset/assert、RCU stall、kernel panic 或 watchdog；
-- 配置异常且无法通过普通重载恢复。
-
-设备仍可管理时，刷回离线保存并已通过 `sysupgrade -T` 的旧版 W1701K sysupgrade 镜像。管理失效时，使用物理 Reset 恢复流程。不要直接盲写 UBI/MTD 原始镜像。
-
-## 固件角色
-
-- `squashfs-sysupgrade.itb`：标准升级和正常回退路径。
-- `initramfs-recovery.itb`：RAM/recovery 环境使用。
-- `chainload-uboot.itb`：引导链用途，不能替代标准 sysupgrade 镜像。
-
-当前发布版启用了 `CONFIG_TESTING_OPTIONS`，用于 MLO 诊断。完成诊断后，长期运行应换成保留 mt7996 PS-sync 修复但关闭测试接口的生产构建。
-
-
+确认管理地址可达、radio1/radio2 为 up、pending/retry_failed 为 false、`hostapd.ap-mld0` 为 `ENABLED`，然后检查系统日志中是否存在 RCU stall、mt7996 crash/timeout、Call trace 或 kernel panic。

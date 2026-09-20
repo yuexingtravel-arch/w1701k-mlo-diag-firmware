@@ -1,0 +1,9 @@
+current_version=MLO-diag-20260916
+current_revision=r0-94bf0a3
+957cca87ee3f63b013150c686420d230d38aee4113a53b5b608f0a60f1dc7cc9  /tmp/w1701k-mlo-safe-sysupgrade.itb
+sysupgrade_test_exit=0
+radio1_up=true
+radio1_pending=false
+radio2_up=true
+radio2_pending=false
+hostapd_status=ENABLED

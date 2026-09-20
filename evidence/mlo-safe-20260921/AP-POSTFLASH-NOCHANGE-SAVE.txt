@@ -1,0 +1,8 @@
+ready=true
+attempts=1
+elapsed_seconds=0
+radio1=true/false/false
+radio2=true/false/false
+hostapd=ENABLED
+uci_changes_count=0
+critical_log_matches=0

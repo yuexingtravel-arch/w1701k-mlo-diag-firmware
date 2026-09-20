@@ -1,0 +1,849 @@
+diff --git a/package/kernel/mt76/Makefile b/package/kernel/mt76/Makefile
+index 759e34f..423b6fb 100644
+--- a/package/kernel/mt76/Makefile
++++ b/package/kernel/mt76/Makefile
+@@ -1,7 +1,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=mt76
+-PKG_RELEASE=1
++PKG_RELEASE=2
+ 
+ PKG_LICENSE:=BSD-3-Clause-Clear
+ PKG_LICENSE_FILES:=
+diff --git a/package/luci-app-wifi7/Makefile b/package/luci-app-wifi7/Makefile
+index efbc196..20b4c0f 100644
+--- a/package/luci-app-wifi7/Makefile
++++ b/package/luci-app-wifi7/Makefile
+@@ -8,8 +8,8 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=luci-app-wifi7
+-PKG_VERSION:=1.0.0
+-PKG_RELEASE:=20260502
++PKG_VERSION:=1.1.1
++PKG_RELEASE:=20260921
+ 
+ LUCI_TITLE:=LuCI WiFi 7 MT7996 module for BPI-R4
+ LUCI_DESCRIPTION:=LuCI module for WiFi 7 (MT7996 / BPI-R4). Provides Network > WiFi 7 with tabs for Overview, MLD config, Radio, Networks, Stations and Diagnostics. Requires OpenWrt with MT7996 support and MLD hostapd.
+diff --git a/package/luci-app-wifi7/htdocs/luci-static/resources/view/wifi7/index.js b/package/luci-app-wifi7/htdocs/luci-static/resources/view/wifi7/index.js
+index 8d2eb6b..9d7588a 100644
+--- a/package/luci-app-wifi7/htdocs/luci-static/resources/view/wifi7/index.js
++++ b/package/luci-app-wifi7/htdocs/luci-static/resources/view/wifi7/index.js
+@@ -11,9 +11,9 @@ var callUciGetWireless = rpc.declare({
+     expect: { values: {} }
+ });
+ 
+-var callHostapdStatus = rpc.declare({
+-    object: 'hostapd.ap-mld-1',
+-    method: 'get_status',
++var callWirelessStatus = rpc.declare({
++    object: 'network.wireless',
++    method: 'status',
+     expect: {}
+ });
+ 
+@@ -24,6 +24,140 @@ var callExec = rpc.declare({
+     expect: {}
+ });
+ 
++function delay(ms) {
++    return new Promise(function(resolve) { setTimeout(resolve, ms); });
++}
++
++function withTimeout(promise, ms, stage) {
++    return new Promise(function(resolve, reject) {
++        var timer = setTimeout(function() {
++            reject(new Error(stage + ' timed out after ' + Math.ceil(ms / 1000) + ' s'));
++        }, ms);
++        Promise.resolve(promise).then(function(value) {
++            clearTimeout(timer);
++            resolve(value);
++        }, function(err) {
++            clearTimeout(timer);
++            reject(err);
++        });
++    });
++}
++
++function execChecked(command, params, stage, timeoutMs) {
++    return withTimeout(callExec(command, params || []), timeoutMs || 10000, stage).then(function(result) {
++        if (result && result.code != null && result.code !== 0)
++            throw new Error(stage + ' failed (exit ' + result.code + '): ' + (result.stderr || '').trim());
++        return result || {};
++    });
++}
++
++function wirelessStatus() {
++    return withTimeout(callWirelessStatus(), 6000, 'network.wireless status');
++}
++
++function findMldRuntime(status, section) {
++    var radios = [], ifname = null;
++    Object.keys(status || {}).forEach(function(radioName) {
++        var radio = status[radioName] || {};
++        var matched = (radio.interfaces || []).filter(function(iface) {
++            return iface && iface.section === section;
++        });
++        if (!matched.length) return;
++        radios.push({
++            name: radioName,
++            up: radio.up === true,
++            pending: radio.pending === true,
++            failed: radio.retry_setup_failed === true
++        });
++        matched.some(function(iface) {
++            if (iface.ifname && /^[-_.a-zA-Z0-9]+$/.test(iface.ifname)) {
++                ifname = iface.ifname;
++                return true;
++            }
++            return false;
++        });
++    });
++    return { section: section, ifname: ifname, radios: radios };
++}
++
++function hostapdStatus(ifname) {
++    if (!ifname || !/^[-_.a-zA-Z0-9]+$/.test(ifname))
++        return Promise.reject(new Error('MLO runtime interface was not found'));
++    var call = rpc.declare({
++        object: 'hostapd.' + ifname,
++        method: 'get_status',
++        expect: {}
++    });
++    return withTimeout(call(), 6000, 'hostapd.' + ifname + ' get_status');
++}
++
++function pollMldReady(section, onProgress, maxWaitMs) {
++    var started = Date.now(), attempts = 0, lastReason = 'waiting for wireless status';
++    function check() {
++        attempts++;
++        if (onProgress) onProgress(attempts, lastReason);
++        return wirelessStatus().then(function(status) {
++            var runtime = findMldRuntime(status, section);
++            if (!runtime.radios.length) {
++                lastReason = 'MLO section ' + section + ' is not present in runtime status';
++                throw new Error(lastReason);
++            }
++            var bad = runtime.radios.filter(function(r) { return !r.up || r.pending || r.failed; });
++            if (bad.length) {
++                lastReason = bad.map(function(r) {
++                    return r.name + (r.failed ? ' setup failed' : r.pending ? ' pending' : ' down');
++                }).join(', ');
++                throw new Error(lastReason);
++            }
++            if (!runtime.ifname) {
++                lastReason = 'MLO interface name is not available yet';
++                throw new Error(lastReason);
++            }
++            return hostapdStatus(runtime.ifname).then(function(st) {
++                if (!st || st.status !== 'ENABLED') {
++                    lastReason = 'hostapd.' + runtime.ifname + ' is ' + ((st && st.status) || 'not ready');
++                    throw new Error(lastReason);
++                }
++                runtime.hostapd = st;
++                return runtime;
++            });
++        }).catch(function(err) {
++            lastReason = (err && err.message) || String(err);
++            if (Date.now() - started >= maxWaitMs)
++                throw new Error('WiFi reload did not become ready: ' + lastReason);
++            return delay(2000).then(check);
++        });
++    }
++    return check();
++}
++
++function reloadWifiDetached() {
++    return execChecked('/sbin/wifi', ['reload'], 'wifi reload', 30000);
++}
++
++function pollRadiosReady(names, onProgress, maxWaitMs) {
++    var started = Date.now(), attempts = 0, lastReason = 'waiting for radios';
++    function check() {
++        attempts++;
++        if (onProgress) onProgress(attempts, lastReason);
++        return wirelessStatus().then(function(status) {
++            var bad = names.filter(function(name) {
++                var radio = status[name] || {};
++                return radio.up !== true || radio.pending === true || radio.retry_setup_failed === true;
++            });
++            if (!bad.length) return status;
++            lastReason = bad.join(', ') + ' not ready';
++            throw new Error(lastReason);
++        }).catch(function(err) {
++            lastReason = (err && err.message) || String(err);
++            if (Date.now() - started >= maxWaitMs)
++                throw new Error('WiFi reload did not become ready: ' + lastReason);
++            return delay(2000).then(check);
++        });
++    }
++    return check();
++}
++
+ // network.wireless status via exec (rpcd ACL for network.wireless is session-restricted)
+ function callWirelessStatusExec() {
+     return L.resolveDefault(callExec('/bin/sh', [
+@@ -46,10 +180,11 @@ function parseStat(raw) {
+ }
+ 
+ var bwMap = {
+-    '0': '20 MHz', '1': '40 MHz', '2': '80 MHz',
+-    '3': '160 MHz', '4': '320 MHz',
+-    '5': '160 MHz', '6': '320 MHz',
+-    '9': '160 MHz'
++    '0': '20/40 MHz',  // CONF_OPER_CHWIDTH_USE_HT
++    '1': '80 MHz',     // CONF_OPER_CHWIDTH_80MHZ
++    '2': '160 MHz',    // CONF_OPER_CHWIDTH_160MHZ
++    '3': '80+80 MHz',  // CONF_OPER_CHWIDTH_80P80MHZ
++    '9': '320 MHz'     // CONF_OPER_CHWIDTH_320MHZ
+ };
+ 
+ function freqLabel(stat) {
+@@ -287,20 +422,27 @@ return view.extend({
+ 
+     activeTab: 'overview',
+ 
+-    // Derive hostapd/iw ifname from UCI section name
+-    // ap_mld_1 -> ap-mld-1, mlo0 -> ap-mld0, mlo1 -> ap-mld1
+-    _mldIfname: function(sid) {
++    // Prefer netifd runtime data. UCI section numbers do not map reliably to
++    // hostapd MLD interface numbers (for example mlo1 can be ap-mld0).
++    _mldIfname: function(sid, status) {
++        var runtime = findMldRuntime(status || {}, sid);
++        if (runtime.ifname) return runtime.ifname;
+         if (sid === 'ap_mld_1') return 'ap-mld-1';
+         var m = sid.match(/^mlo(\d+)$/);
+-        if (m) return 'ap-mld' + m[1];
+-        // generic fallback: replace underscores with dashes
++        if (m) return 'ap-mld' + Math.max(0, parseInt(m[1], 10) - 1);
+         return sid.replace(/_/g, '-');
+     },
+ 
+     loadData: function() {
+         var self = this;
+-        // Phase 1: get UCI data synchronously to know all interfaces
+-        return L.resolveDefault(callUciGetWireless('wireless'), {}).then(function(uciData) {
++        // Fetch UCI and netifd together so every later hostapd/iw operation
++        // uses the runtime interface name actually assigned by netifd.
++        return Promise.all([
++            L.resolveDefault(callUciGetWireless('wireless'), {}),
++            L.resolveDefault(wirelessStatus(), {})
++        ]).then(function(base) {
++        var uciData = base[0];
++        var runtimeStatus = base[1];
+ 
+         // Collect all MLD sections and legacy interfaces from UCI
+         var mldSIDs = [], legacySIDs = [];
+@@ -310,11 +452,14 @@ return view.extend({
+             if (s['mlo'] === '1') mldSIDs.push(sid);
+             else legacySIDs.push(sid);
+         });
++        var primaryMldIfname = mldSIDs.length
++            ? self._mldIfname(mldSIDs[0], runtimeStatus)
++            : null;
+ 
+         // Build dynamic Promise.all
+         var calls = [
+             Promise.resolve(uciData),                          // [0] UCI
+-            L.resolveDefault(callHostapdStatus(), {}),         // [1] hostapd status
++            primaryMldIfname ? L.resolveDefault(hostapdStatus(primaryMldIfname), {}) : Promise.resolve({}), // [1]
+             L.resolveDefault(callExec('/bin/cat', [            // [2] sku_disable
+                 '/sys/kernel/debug/ieee80211/phy0/mt76/sku_disable'
+             ]), { stdout: '1' }),
+@@ -322,7 +467,7 @@ return view.extend({
+ 
+         // [3..] MLD hostapd stat per link (0,1,2) per MLD network
+         mldSIDs.forEach(function(sid) {
+-            var ifn = self._mldIfname(sid);
++            var ifn = self._mldIfname(sid, runtimeStatus);
+             calls.push(L.resolveDefault(callExec('/usr/sbin/hostapd_cli',
+                 ['-i', ifn, '-l', '0', 'stat']), { stdout: '' }));
+             calls.push(L.resolveDefault(callExec('/usr/sbin/hostapd_cli',
+@@ -334,7 +479,7 @@ return view.extend({
+         // [3 + mldSIDs.length*3 ..] MLD station dumps
+         var mldStaBase = 3 + mldSIDs.length * 3;
+         mldSIDs.forEach(function(sid) {
+-            var ifn = self._mldIfname(sid);
++            var ifn = self._mldIfname(sid, runtimeStatus);
+             calls.push(L.resolveDefault(callExec('/usr/sbin/iw',
+                 ['dev', ifn, 'station', 'dump']), { stdout: '' }));
+         });
+@@ -360,12 +505,12 @@ return view.extend({
+             ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/mt76/band2/txpower_info']],
+             ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/mt76/mat_table']],
+             ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/mt76/dfs_status']],
+-            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/link-0/txpower']],
+-            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/link-1/txpower']],
+-            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/link-2/txpower']],
++            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:' + (primaryMldIfname || 'ap-mld0') + '/link-0/txpower']],
++            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:' + (primaryMldIfname || 'ap-mld0') + '/link-1/txpower']],
++            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:' + (primaryMldIfname || 'ap-mld0') + '/link-2/txpower']],
+             ['/bin/cat', ['/proc/version']],
+             ['/bin/sh',  ['-c', 'for d in /sys/class/thermal/thermal_zone*; do t=$(cat $d/temp 2>/dev/null); n=$(cat $d/type 2>/dev/null); [ -n "$t" ] && [ -n "$n" ] && echo "$n $((t/1000))"; done']],
+-            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/mt76_links_info']],
++            ['/bin/cat', ['/sys/kernel/debug/ieee80211/phy0/netdev:' + (primaryMldIfname || 'ap-mld0') + '/mt76_links_info']],
+             ['/bin/sh',  ['-c', 'ubus call network.wireless status 2>/dev/null']],
+         ].forEach(function(c) {
+             calls.push(L.resolveDefault(callExec(c[0], c[1]), { stdout: '' }));
+@@ -379,6 +524,9 @@ return view.extend({
+             data._mldStaBase  = mldStaBase;
+             data._legacyStaBase = legacyStaBase;
+             data._diagBase    = diagBase;
++            data._wirelessStatus = runtimeStatus;
++            data._mldIfnames = {};
++            mldSIDs.forEach(function(sid) { data._mldIfnames[sid] = self._mldIfname(sid, runtimeStatus); });
+             return data;
+         });
+         }); // end phase 1
+@@ -511,7 +659,7 @@ return view.extend({
+                 sid:    sid,
+                 ssid:   s['ssid'] || sid,
+                 enc:    s['encryption'] || 'sae',
+-                ifname: s['ifname'] || self._mldIfname(sid)
++                ifname: s['ifname'] || (data._mldIfnames && data._mldIfnames[sid]) || self._mldIfname(sid, data._wirelessStatus)
+             };
+         });
+ 
+@@ -604,7 +752,7 @@ return view.extend({
+         var overviewItems = [
+             skuBanner(skuOff, skuIdx),
+             E('div', { 'style': 'font-size:12px;margin-bottom:14px;color:#aaa' }, [
+-                'hostapd ap-mld-1: ',
++                'hostapd ' + ((mldNets[0] && mldNets[0].ifname) || 'MLO') + ': ',
+                 E('strong', { 'style': 'color:' + (hapdOK ? '#1d9e75' : '#e24b4a') },
+                     hapdOK ? 'ENABLED' : 'NOT RUNNING'),
+                 mldNets.length > 1
+@@ -733,73 +881,66 @@ return view.extend({
+             var newRsno = rsnoSel.value;
+             if (!newSSID) { alert('SSID cannot be empty'); return; }
+             if (newKey.length < 8 && newEnc !== 'owe') {
+-                alert('Password must be at least 8 characters'); return; }
+-
++                alert('Password must be at least 8 characters'); return;
++            }
+             progressDiv.style.display = 'block';
+-            applyBtn.disabled   = true;
++            applyBtn.disabled = true;
+             discardBtn.disabled = true;
+-
+             var pbar  = document.getElementById('wifi7-pbar');
+             var pstat = document.getElementById('wifi7-pstat');
+-            var steps = [
+-                [10, 'Writing UCI config...'],
+-                [25, 'Committing wireless UCI...'],
+-                [40, 'Running wifi restart...'],
+-                [60, 'Waiting for hostapd init...'],
+-                [80, 'Polling hostapd.ap-mld-1 status...']
+-            ];
+-            var si = 0;
+-            function nextStep() {
+-                if (si >= steps.length) return;
+-                pbar.style.width  = steps[si][0] + '%';
+-                pstat.textContent = steps[si][1];
+-                si++;
+-                if (si < steps.length) setTimeout(nextStep, 800);
+-            }
+-            nextStep();
++            pstat.style.color = '#888';
++            pbar.style.width = '10%';
++            pstat.textContent = 'Writing UCI configuration...';
++            var stage = 'writing UCI configuration';
+ 
+-            L.resolveDefault(callUciSet('wireless', mldSID, {
++            withTimeout(callUciSet('wireless', mldSID, {
+                 ssid: newSSID, key: newKey,
+                 encryption: newEnc, encryption_rsno: newRsno
+-            }), null).then(function() {
+-                return L.resolveDefault(callUciCommit('wireless'), null);
+-            }).then(function() {
+-                return callExec('/sbin/wifi', []);
+-            }).then(function() {
+-                var tries    = 0;
+-                var maxTries = 60;
+-                function doPoll() {
+-                    tries++;
+-                    pbar.style.width  = Math.min(80 + tries, 98) + '%';
+-                    pstat.textContent = 'Polling hostapd (' + tries + '/' + maxTries + ')...';
+-                    L.resolveDefault(callHostapdStatus(), {}).then(function(st) {
+-                        if (st && st.status === 'ENABLED') {
+-                            pbar.style.width  = '100%';
+-                            pstat.textContent = 'Done -- WiFi active';
+-                            applyBtn.disabled   = false;
+-                            discardBtn.disabled = false;
+-                            setTimeout(function() {
+-                                progressDiv.style.display = 'none';
+-                                pbar.style.width = '0%';
+-                            }, 2000);
+-                        } else if (tries >= maxTries) {
+-                            pstat.textContent =
+-                                'Timeout! Try: 1) reboot   2) power cycle if no response';
+-                            pstat.style.color = '#e24b4a';
+-                            applyBtn.disabled   = false;
+-                            discardBtn.disabled = false;
+-                        } else {
+-                            setTimeout(doPoll, 3000);
+-                        }
+-                    });
+-                }
+-                setTimeout(doPoll, 3000);
++            }), 10000, stage)
++            .then(function() {
++                stage = 'committing wireless UCI';
++                pbar.style.width = '30%';
++                pstat.textContent = 'Committing wireless UCI...';
++                return withTimeout(callUciCommit('wireless'), 10000, stage);
++            })
++            .then(function() {
++                stage = 'starting wifi reload';
++                pbar.style.width = '50%';
++                pstat.textContent = 'Starting wifi reload...';
++                return reloadWifiDetached();
++            })
++            .then(function() {
++                stage = 'waiting for MLO runtime';
++                return pollMldReady(mldSID, function(attempt, reason) {
++                    pbar.style.width = Math.min(55 + attempt, 97) + '%';
++                    pstat.textContent = 'Waiting for MLO (' + attempt + '): ' + reason;
++                }, 120000);
++            })
++            .then(function(runtime) {
++                stage = 'complete';
++                pbar.style.width = '100%';
++                pstat.style.color = '#1d9e75';
++                pstat.textContent = 'Done -- ' + runtime.ifname + ' is ENABLED';
++                setTimeout(function() {
++                    progressDiv.style.display = 'none';
++                    pbar.style.width = '0%';
++                }, 2500);
++            })
++            .catch(function(err) {
++                pbar.style.width = '100%';
++                pstat.style.color = '#e24b4a';
++                pstat.textContent = 'Failed during ' + stage + ': ' +
++                    ((err && err.message) || String(err));
++            })
++            .finally(function() {
++                applyBtn.disabled = false;
++                discardBtn.disabled = false;
+             });
+         });
+ 
+         return E('div', {}, [
+-            infoBanner('MLD SSID, password and encryption are stored in ap_mld_1 UCI section. PMF (ieee80211w=2) is mandatory for MLD and enforced automatically.'),
+-            sectionBox('ap_mld_1 -- network configuration', '#1d9e75', null,
++            infoBanner('MLD SSID, password and encryption are stored in ' + mldSID + ' UCI section. PMF (ieee80211w=2) is mandatory for MLD and enforced automatically.'),
++            sectionBox(mldSID + ' -- network configuration', '#1d9e75', null,
+                 E('div', {}, [
+                     fieldRow('SSID',             ssidInput),
+                     fieldRow('Password',         keyWrapMld),
+@@ -816,8 +957,8 @@ return view.extend({
+                         mloBtn.addEventListener('click', function() {
+                             if (!confirm(
+                                 mloOn
+-                                ? 'WARNING: Disabling MLO will switch ap_mld_1 to single-band mode.\nThis requires a full reboot to take effect.\nAre you sure?'
+-                                : 'Enable MLO on ap_mld_1.\nThis requires a full reboot to take effect.\nAre you sure?'
++                                ? 'WARNING: Disabling MLO will switch ' + mldSID + ' to single-band mode.\nThis requires a full reboot to take effect.\nAre you sure?'
++                                : 'Enable MLO on ' + mldSID + '.\nThis requires a full reboot to take effect.\nAre you sure?'
+                             )) return;
+                             var callUciSetMlo = rpc.declare({ object:'uci', method:'set',
+                                 params:['config','section','values'], expect:{} });
+@@ -826,13 +967,24 @@ return view.extend({
+                             mloBtn.disabled = true;
+                             mloBtn.textContent = 'Writing UCI...';
+                             var newMlo = mloOn ? '0' : '1';
+-                            L.resolveDefault(callUciSetMlo('wireless', mldSID, { mlo: newMlo }), null)
+-                            .then(function() { return L.resolveDefault(callUciCommitMlo('wireless'), null); })
++                            withTimeout(callUciSetMlo('wireless', mldSID, { mlo: newMlo }),
++                                10000, 'writing MLO setting')
++                            .then(function() {
++                                return withTimeout(callUciCommitMlo('wireless'),
++                                    10000, 'committing MLO setting');
++                            })
+                             .then(function() {
+                                 mloBtn.textContent = 'Done -- REBOOT REQUIRED';
+                                 mloBtn.style.background = '#2a1a0a';
+                                 mloBtn.style.borderColor = '#f5a623';
+                                 mloBtn.style.color = '#fac775';
++                            })
++                            .catch(function(err) {
++                                mloBtn.textContent = 'Failed: ' +
++                                    ((err && err.message) || String(err));
++                                mloBtn.style.background = '#3a0a0a';
++                                mloBtn.style.color = '#f4a0a0';
++                                mloBtn.disabled = false;
+                             });
+                         });
+                         var wrap = E('div', { 'style': 'display:flex;align-items:center;gap:10px' }, [
+@@ -1165,65 +1317,94 @@ return view.extend({
+         });
+         applyBtn.addEventListener('click',function(){
+             var country=countrySel.value;
+-            // Country change requires full reboot -- wifi restart is not sufficient
+             if (country !== (r0['country']||'CZ')) {
+                 if (!confirm('Country code changed to ' + country + '.\n\n' +
+                     'WARNING: Country change requires a full REBOOT to take effect.\n' +
+-                    'wifi restart alone is NOT sufficient.\n\n' +
++                    'wifi reload alone is NOT sufficient.\n\n' +
+                     'Proceed? (Settings will be saved, then you must reboot manually.)')) return;
+             }
+-            progressDiv.style.display='block'; applyBtn.disabled=true; discardBtn.disabled=true;
++            progressDiv.style.display='block';
++            applyBtn.disabled=true;
++            discardBtn.disabled=true;
+             var pbar=document.getElementById('wifi7-radio-pbar');
+             var pstat=document.getElementById('wifi7-radio-pstat');
+-            var steps=[[10,'Writing radio0...'],[25,'Writing radio1...'],[40,'Writing radio2...'],
+-                       [55,'Committing UCI...'],[70,'Running wifi restart...'],[80,'Polling hostapd...']];
+-            var si=0;
+-            function nextStep(){if(si>=steps.length)return;pbar.style.width=steps[si][0]+'%';
+-                pstat.textContent=steps[si][1];si++;if(si<steps.length)setTimeout(nextStep,600);}
+-            nextStep();
++            pstat.style.color='#888';
++            pbar.style.width='10%';
++            pstat.textContent='Writing radio configuration...';
++            var stage='writing radio configuration';
+             var skuIdx=skuInput.value||'0';
+-            // vif_txpower goes to iface, not device -- find iface sids
+-            var i0sid='', i1sid='', i2sid='';
+-            Object.keys(uciData).forEach(function(sid) {
++            var i0sid='',i1sid='',i2sid='';
++            Object.keys(uciData).forEach(function(sid){
+                 var s=uciData[sid];
+-                if(s['.type']==='wifi-iface'&&s['mlo']!=='1'&&s['mode']==='ap') {
+-                    if(s['device']==='radio0') i0sid=sid;
+-                    if(s['device']==='radio1') i1sid=sid;
+-                    if(s['device']==='radio2') i2sid=sid;
++                if(s['.type']==='wifi-iface'&&s['mlo']!=='1'&&s['mode']==='ap'){
++                    if(s['device']==='radio0')i0sid=sid;
++                    if(s['device']==='radio1')i1sid=sid;
++                    if(s['device']==='radio2')i2sid=sid;
+                 }
+             });
+-            var txpWrites = [];
+-            if(r0txp._inp.value && i0sid) txpWrites.push(L.resolveDefault(callUciSet('wireless',i0sid,{vif_txpower:r0txp._inp.value}),null));
+-            if(r1txp._inp.value && i1sid) txpWrites.push(L.resolveDefault(callUciSet('wireless',i1sid,{vif_txpower:r1txp._inp.value}),null));
+-            if(r2txp._inp.value && i2sid) txpWrites.push(L.resolveDefault(callUciSet('wireless',i2sid,{vif_txpower:r2txp._inp.value}),null));
+-            Promise.all([
+-                L.resolveDefault(callUciSet('wireless','radio0',{channel:r0ch.value,htmode:r0ht.value,
++            var writes=[
++                callUciSet('wireless','radio0',{channel:r0ch.value,htmode:r0ht.value,
+                     disabled:r0dis.checked?'1':'0',noscan:r0noscan.checked?'1':'0',country:country,sku_idx:skuIdx,
+                     he_twt_responder:r0twt.checked?'1':'0',legacy_rates:r0legacy.checked?'1':'0',
+-                    sr_enable:srEnable.checked?'1':'0',etxbfen:etxbfen.checked?'1':'0'}),null),
+-                L.resolveDefault(callUciSet('wireless','radio1',{channel:r1ch.value,htmode:r1ht.value,
++                    sr_enable:srEnable.checked?'1':'0',etxbfen:etxbfen.checked?'1':'0'}),
++                callUciSet('wireless','radio1',{channel:r1ch.value,htmode:r1ht.value,
+                     disabled:r1dis.checked?'1':'0',background_radar:r1bgr.checked?'1':'0',country:country,sku_idx:skuIdx,
+-                    he_twt_responder:r1twt.checked?'1':'0'}),null),
+-                L.resolveDefault(callUciSet('wireless','radio2',{channel:r2ch.value,htmode:r2ht.value,
++                    he_twt_responder:r1twt.checked?'1':'0'}),
++                callUciSet('wireless','radio2',{channel:r2ch.value,htmode:r2ht.value,
+                     disabled:r2dis.checked?'1':'0',lpi_enable:r2lpi.checked?'1':'0',noscan:r2noscan.checked?'1':'0',
+-                    country:country,sku_idx:skuIdx,he_twt_responder:r2twt.checked?'1':'0'}),null)
+-            ].concat(txpWrites)
+-            ).then(function(){return L.resolveDefault(callUciCommit('wireless'),null);})
+-            .then(function(){return callExec('/sbin/wifi',[]);})
++                    country:country,sku_idx:skuIdx,he_twt_responder:r2twt.checked?'1':'0'})
++            ];
++            if(r0txp._inp.value&&i0sid)writes.push(callUciSet('wireless',i0sid,{vif_txpower:r0txp._inp.value}));
++            if(r1txp._inp.value&&i1sid)writes.push(callUciSet('wireless',i1sid,{vif_txpower:r1txp._inp.value}));
++            if(r2txp._inp.value&&i2sid)writes.push(callUciSet('wireless',i2sid,{vif_txpower:r2txp._inp.value}));
++
++            withTimeout(Promise.all(writes),15000,stage)
+             .then(function(){
+-                var tries=0,maxTries=60;
+-                function doPoll(){tries++;pbar.style.width=Math.min(80+tries,98)+'%';
+-                    pstat.textContent='Polling hostapd ('+tries+'/'+maxTries+')...';
+-                    L.resolveDefault(callHostapdStatus(),{}).then(function(st){
+-                        if(st&&st.status==='ENABLED'){pbar.style.width='100%';pstat.textContent='Done -- WiFi active';
+-                            applyBtn.disabled=false;discardBtn.disabled=false;
+-                            setTimeout(function(){progressDiv.style.display='none';pbar.style.width='0%';},2000);
+-                        } else if(tries>=maxTries){pstat.textContent='Timeout! Try: 1) reboot   2) power cycle';
+-                            pstat.style.color='#e24b4a';applyBtn.disabled=false;discardBtn.disabled=false;
+-                        } else {setTimeout(doPoll,3000);}
+-                    });
+-                }
+-                setTimeout(doPoll,3000);
++                stage='committing wireless UCI';
++                pbar.style.width='30%';
++                pstat.textContent='Committing wireless UCI...';
++                return withTimeout(callUciCommit('wireless'),10000,stage);
++            })
++            .then(function(){
++                stage='starting wifi reload';
++                pbar.style.width='50%';
++                pstat.textContent='Starting wifi reload...';
++                return reloadWifiDetached();
++            })
++            .then(function(){
++                stage='waiting for wireless runtime';
++                var mld=(data._mldSIDs||[])[0];
++                var active=[];
++                if(!r0dis.checked)active.push('radio0');
++                if(!r1dis.checked)active.push('radio1');
++                if(!r2dis.checked)active.push('radio2');
++                var progress=function(attempt,reason){
++                    pbar.style.width=Math.min(55+attempt,97)+'%';
++                    pstat.textContent='Waiting for WiFi ('+attempt+'): '+reason;
++                };
++                return mld ? pollMldReady(mld,progress,120000)
++                           : pollRadiosReady(active,progress,120000);
++            })
++            .then(function(runtime){
++                stage='complete';
++                pbar.style.width='100%';
++                pstat.style.color='#1d9e75';
++                pstat.textContent='Done -- WiFi active'+
++                    (runtime&&runtime.ifname?' on '+runtime.ifname:'');
++                setTimeout(function(){
++                    progressDiv.style.display='none';
++                    pbar.style.width='0%';
++                },2500);
++            })
++            .catch(function(err){
++                pbar.style.width='100%';
++                pstat.style.color='#e24b4a';
++                pstat.textContent='Failed during '+stage+': '+
++                    ((err&&err.message)||String(err));
++            })
++            .finally(function(){
++                applyBtn.disabled=false;
++                discardBtn.disabled=false;
+             });
+         });
+         return E('div',{},[
+@@ -1461,7 +1642,7 @@ return view.extend({
+                     return L.resolveDefault(callUciCommit('wireless'), null);
+                 }).then(function() {
+                     addStatusSpan.textContent = 'Running wifi restart...';
+-                    return callExec('/sbin/wifi', []);
++                    return reloadWifiDetached();
+                 }).then(function() {
+                     addStatusSpan.textContent = 'Done';
+                     addStatusSpan.style.color = '#1d9e75';
+@@ -1595,7 +1776,7 @@ return view.extend({
+                         return L.resolveDefault(callUciCommit('wireless'), null);
+                     }).then(function() {
+                         statusSpan.textContent = 'Running wifi restart...';
+-                        return callExec('/sbin/wifi', []);
++                        return reloadWifiDetached();
+                     }).then(function() {
+                         statusSpan.textContent = 'Done';
+                         statusSpan.style.color = '#1d9e75';
+@@ -1634,7 +1815,7 @@ return view.extend({
+                     .then(function() {
+                         return L.resolveDefault(callUciCommit('wireless'), null);
+                     }).then(function() {
+-                        return callExec('/sbin/wifi', []);
++                        return reloadWifiDetached();
+                     }).then(function() {
+                         statusSpan.textContent = 'Done -- removed';
+                         // Remove card from DOM
+diff --git a/package/luci-app-wifi7/root/usr/share/rpcd/acl.d/luci-app-wifi7.json b/package/luci-app-wifi7/root/usr/share/rpcd/acl.d/luci-app-wifi7.json
+index 0579b6c..42dcea6 100644
+--- a/package/luci-app-wifi7/root/usr/share/rpcd/acl.d/luci-app-wifi7.json
++++ b/package/luci-app-wifi7/root/usr/share/rpcd/acl.d/luci-app-wifi7.json
+@@ -1,35 +1,67 @@
+ {
+-    "luci-mod-network-config": {
+-        "description": "WiFi 7 MT7996 module",
+-        "read": {
+-            "file": {
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/sku_disable": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/fw_version": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/mat_table": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/dfs_status": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/band0/txpower_info": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/band1/txpower_info": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/mt76/band2/txpower_info": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/link-0/txpower": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/link-1/txpower": [ "read" ],
+-                "/sys/kernel/debug/ieee80211/phy0/netdev:ap-mld-1/link-2/txpower": [ "read" ],
+-                "/usr/sbin/hostapd_cli": [ "exec" ],
+-                "/usr/sbin/iw": [ "exec" ],
+-                "/sbin/wifi": [ "exec" ],
+-                "/sbin/iw": [ "exec" ]
+-            },
+-            "ubus": {
+-                "file": [ "exec" ],
+-                "hostapd.*": [ "get_status", "get_clients" ],
+-                "hostapd.ap-mld-1": [ "get_status" ]
+-            },
+-            "uci": [ "wireless" ]
+-        },
+-        "write": {
+-            "uci": [ "wireless" ],
+-            "ubus": {
+-                "file": [ "exec" ]
+-            }
+-        }
++  "luci-mod-network-config": {
++    "description": "WiFi 7 MT7996 module",
++    "read": {
++      "file": {
++        "/sys/kernel/debug/ieee80211/phy0/mt76/sku_disable": [
++          "read"
++        ],
++        "/sys/kernel/debug/ieee80211/phy0/mt76/fw_version": [
++          "read"
++        ],
++        "/sys/kernel/debug/ieee80211/phy0/mt76/mat_table": [
++          "read"
++        ],
++        "/sys/kernel/debug/ieee80211/phy0/mt76/dfs_status": [
++          "read"
++        ],
++        "/sys/kernel/debug/ieee80211/phy0/mt76/band0/txpower_info": [
++          "read"
++        ],
++        "/sys/kernel/debug/ieee80211/phy0/mt76/band1/txpower_info": [
++          "read"
++        ],
++        "/sys/kernel/debug/ieee80211/phy0/mt76/band2/txpower_info": [
++          "read"
++        ],
++        "/usr/sbin/hostapd_cli": [
++          "exec"
++        ],
++        "/usr/sbin/iw": [
++          "exec"
++        ],
++        "/sbin/wifi": [
++          "exec"
++        ],
++        "/sbin/iw": [
++          "exec"
++        ]
++      },
++      "ubus": {
++        "file": [
++          "exec"
++        ],
++        "hostapd.*": [
++          "get_status",
++          "get_clients"
++        ],
++        "network.wireless": [
++          "status"
++        ]
++      },
++      "uci": [
++        "wireless"
++      ]
++    },
++    "write": {
++      "uci": [
++        "wireless"
++      ],
++      "ubus": {
++        "file": [
++          "exec"
++        ]
++      }
+     }
++  }
+ }
+diff --git a/package/network/services/hostapd/Makefile b/package/network/services/hostapd/Makefile
+index e765ef5..9f33276 100644
+--- a/package/network/services/hostapd/Makefile
++++ b/package/network/services/hostapd/Makefile
+@@ -5,7 +5,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=hostapd
+-PKG_RELEASE:=2
++PKG_RELEASE:=3
+ 
+ PKG_SOURCE_URL:=https://w1.fi/hostap.git
+ PKG_SOURCE_PROTO:=git
+diff --git a/package/network/services/hostapd/files/hostapd-full.config b/package/network/services/hostapd/files/hostapd-full.config
+index a72ad0f..6ad3a73 100644
+--- a/package/network/services/hostapd/files/hostapd-full.config
++++ b/package/network/services/hostapd/files/hostapd-full.config
+@@ -333,7 +333,7 @@ CONFIG_HS20=y
+ # connect to this hostapd. These options allow, for example, to drop a
+ # certain percentage of probe requests or auth/(re)assoc frames.
+ #
+-#CONFIG_TESTING_OPTIONS=y
++CONFIG_TESTING_OPTIONS=y
+ 
+ # Automatic Channel Selection
+ # This will allow hostapd to pick the channel automatically when channel is set
+diff --git a/package/kernel/mt76/patches/0012-mt7996-fix-ps-sync-complete.patch b/package/kernel/mt76/patches/0012-mt7996-fix-ps-sync-complete.patch
+new file mode 100644
+index 0000000..676c843
+--- /dev/null
++++ b/package/kernel/mt76/patches/0012-mt7996-fix-ps-sync-complete.patch
+@@ -0,0 +1,71 @@
++From 06b69763f2aa9f5e0a9c5cd334813612bd4a2f9c Mon Sep 17 00:00:00 2001
++From: Felix Fietkau <nbd@nbd.name>
++Date: Mon, 27 Jul 2026 15:02:51 +0200
++Subject: [PATCH] wifi: mt76: mt7996: fix infinite loop in PS sync event
++ parsing
++
++A zero-length TLV makes the parser loop spin forever, since neither
++skb_pull() nor the remaining length advance, hanging the RX NAPI thread
++until RCU reports a stall.
++
++Reject TLVs shorter than their header, and validate the per-tag payload
++lengths before dereferencing them.
++
++Fixes: https://github.com/openwrt/mt76/issues/1109
++Signed-off-by: Felix Fietkau <nbd@nbd.name>
++---
++ mt7996/mcu.c | 18 +++++++++++++++---
++ 1 file changed, 15 insertions(+), 3 deletions(-)
++
++diff --git a/mt7996/mcu.c b/mt7996/mcu.c
++index c8a9f316d..e6e2bbcd4 100644
++--- a/mt7996/mcu.c
+++++ b/mt7996/mcu.c
++@@ -845,22 +845,29 @@ mt7996_mcu_rx_ps_sync(struct mt7996_dev *dev, struct sk_buff *skb)
++ 	struct tlv *tlv;
++ 	int len;
++ 
+++	if (skb->len < sizeof(*event))
+++		return;
+++
++ 	skb_pull(skb, sizeof(*event));
++ 
++ 	len = skb->len;
++-	while (len > sizeof(*tlv)) {
+++	while (len >= sizeof(*tlv)) {
++ 		u16 tag, tag_len;
++ 
++ 		tlv = (struct tlv *)skb->data;
++ 		tag = le16_to_cpu(tlv->tag);
++ 		tag_len = le16_to_cpu(tlv->len);
++-		if (tag_len > len)
+++		/* a tag_len below the header size would not advance the buffer */
+++		if (tag_len < sizeof(*tlv) || tag_len > len)
++ 			break;
++ 
++ 		switch (tag) {
++ 		case UNI_PS_CLIENT_INFO: {
++ 			struct mt7996_mcu_ps_client_info *info = (void *)tlv;
++ 
+++			if (tag_len < sizeof(*info))
+++				break;
+++
++ 			mt7996_mcu_ps_transition(dev,
++ 						 le16_to_cpu(info->wlan_idx),
++ 						 info->ps_bit);
++@@ -868,9 +875,14 @@ mt7996_mcu_rx_ps_sync(struct mt7996_dev *dev, struct sk_buff *skb)
++ 		}
++ 		case UNI_PS_MULTI_CLIENT_INFO: {
++ 			struct mt7996_mcu_ps_multi_client_info *info = (void *)tlv;
++-			u16 cnt = le16_to_cpu(info->sta_cnt);
+++			u16 cnt;
++ 			int i;
++ 
+++			if (tag_len < sizeof(*info))
+++				break;
+++
+++			cnt = min_t(u16, le16_to_cpu(info->sta_cnt),
+++				    (tag_len - sizeof(*info)) / sizeof(info->sta_ps_info[0]));
++ 			for (i = 0; i < cnt; i++) {
++ 				u16 entry = le16_to_cpu(info->sta_ps_info[i]);
++ 

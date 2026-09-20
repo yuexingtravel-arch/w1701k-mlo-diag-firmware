@@ -1,0 +1,12 @@
+checked_at=2026-09-21T07:24:18+08:00
+version=MLO-safe-20260921
+revision=r0-94bf0a3
+kernel=6.18.38
+wifi7_package=1.1.1-r20260921
+hostapd_status=ENABLED
+radio1=true/false/false
+radio2=true/false/false
+uci_changes_count=0
+critical_log_matches=0
+	   channel 149 (5745 MHz), width: 160 MHz, center1: 5815 MHz
+	   channel 37 (6135 MHz), width: 320 MHz, center1: 6105 MHz

@@ -1,0 +1,38 @@
+network_wireless_refs=4
+reload_refs=2
+hardcoded_old_object_count=0
+--- link1 stat ---
+state=ENABLED
+freq=5745
+num_sta_non_erp=0
+num_sta_no_short_slot_time=2
+num_sta_no_short_preamble=1
+num_sta_ht_no_gf=2
+num_sta_no_ht=0
+num_sta_ht_20_mhz=0
+num_sta_ht40_intolerant=0
+channel=149
+eht_oper_chwidth=2
+num_links=2
+max_txpower=30
+num_sta[0]=0
+num_sta[1]=2
+--- link2 stat ---
+state=ENABLED
+freq=6135
+num_sta_non_erp=0
+num_sta_no_short_slot_time=0
+num_sta_no_short_preamble=0
+num_sta_ht_no_gf=0
+num_sta_no_ht=1
+num_sta_ht_20_mhz=0
+num_sta_ht40_intolerant=0
+channel=37
+eht_oper_chwidth=9
+num_links=2
+max_txpower=30
+num_sta[0]=0
+num_sta[1]=1
+--- client MLO fields ---
+flags=[AUTH][ASSOC][SHORT_PREAMBLE][WMM][MFP][VHT][HE][EHT][6GHZ]
+max_simul_links=1
