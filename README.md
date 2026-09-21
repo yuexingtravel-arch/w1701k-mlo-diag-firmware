@@ -28,10 +28,10 @@
 - Windows QCNCM865 报告 802.11be、5 GHz + 6 GHz 两条关联链路。
 - 测试期间没有发现 RCU stall、mt7996 crash/timeout、Call trace 或 kernel panic。
 
-## 尚未证明
+## 最终 MLO 评估
 
-此版本没有宣称完成真正的双链数据聚合或 TTLM。现有 mt76/mt7996 树缺少完整的数据面 TTLM 消费与多链发送调度，hostapd 也保留了能力保护逻辑。QCNCM865 的双链关联成立，但单个 TCP/UDP 流量是否同时跨两条链调度仍未得到证明。
+此版本没有宣称完成真正的双链数据聚合或 negotiated TTLM。当前 mt7996 已按 TID 奇偶在默认链和第二链之间固定选链，但缺少完整 TTLM 消费、动态负载调度和端到端 QoS 映射；hostapd 也保留了能力保护逻辑。QCNCM865 的双链关联成立，普通 TCP/UDP 流量仍主要使用 6 GHz 默认链。
 
-本轮吞吐复测约为 80–213 Mbit/s，明显低于此前测试；Windows 侧 RSS 和 Throughput Acceleration 均为关闭，修改被系统以“拒绝访问”阻止。该结果应视为客户端/测试环境的未解决项，而不是固件性能上限。
+早期复测约为 80–213 Mbit/s，属于客户端/测试环境异常；后续在稳定双链关联下，普通 TID 0 下行达到约 1093.8 Mbit/s，但 AP 计数证明数据只走 6 GHz。Windows 侧 RSS 和 Throughput Acceleration 均为关闭，修改被系统以“拒绝访问”阻止。
 
-详见 `RELEASE-NOTES.md`、`TEST-RESULTS.md`、`TTLM-RESEARCH.md`、`RECOVERY-AND-ROLLBACK.md` 和 `BUILD-NOTES.md`。
+最终 Go/No-Go 结论是暂停继续开发透明 5+6 GHz 带宽聚合，保留当前稳定固件。详见 `GO-NO-GO-EVALUATION-20260921.md`、`RELEASE-NOTES.md`、`TEST-RESULTS.md`、`TTLM-RESEARCH.md`、`RECOVERY-AND-ROLLBACK.md` 和 `BUILD-NOTES.md`。

@@ -14,8 +14,7 @@
    - 检查事件最小长度。
    - 拒绝短于 TLV header 的长度。
    - 校验单客户端结构和多客户端数组边界。
-4. 保持 hostapd TTLM 能力保护。
-   - 没有在 mt7996 数据面尚不完整时强制公布 TID-to-Link 协商能力。
+4. 保持 hostapd TTLM 能力保护，没有在数据面尚不完整时强制公布协商能力。
 
 ## 实机结果
 
@@ -31,7 +30,13 @@
 
 ## 已知限制
 
-- 未证明 TTLM 或同一业务的真实双链聚合。
-- 当前吞吐复测偏低；Windows 网卡的 RSS 和吞吐加速设置需要管理员权限才能进一步验证。
-- AP 到 Windows 的反向 iperf3 测试因 Windows 监听端口不可达而超时。
+- 未实现 negotiated TTLM 或普通业务的真实双链聚合。
+- mt7996 当前仅按 TID 奇偶固定选链。
+- AP 到 Windows 的主动 iperf3 测试受 Windows 监听端口/防火墙限制。
 - 本版本应作为预发布版本使用。
+
+## 发布后最终评估
+
+后续实测确认 QCNCM865 已建立 5 GHz 160 MHz + 6 GHz 320 MHz 双链，但普通 TID 0 下行约 1093.8 Mbit/s 的数据全部落在 6 GHz。端到端 ToS/TID 分类也未贯通；最新 openwrt/mt76 主线没有完整 negotiated TTLM 或动态负载调度可直接回移植。
+
+因此本项目决定暂停继续开发透明双链吞吐聚合，保留本版本作为稳定的 MLO 关联、PS-sync 修复和 LuCI 页面修复版本。完整依据见 `GO-NO-GO-EVALUATION-20260921.md`。
